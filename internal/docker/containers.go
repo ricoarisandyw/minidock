@@ -46,20 +46,19 @@ type Instance struct {
 // Running reports whether the container is currently up.
 func (i Instance) Running() bool { return i.State == "running" || i.State == "restarting" }
 
-// MySQLClient returns the SQL client program inside the container ("mysql" or
-// "mariadb"), or "" when the server is not a MySQL/MariaDB one.
-func (i Instance) MySQLClient() string {
-	image := strings.ToLower(i.Image)
-	if n := strings.LastIndex(image, "/"); n >= 0 {
-		image = image[n+1:]
-	}
-	switch {
-	case i.TemplateID == "mariadb" || strings.HasPrefix(image, "mariadb"):
+// SQLClient returns the SQL client program inside the container ("mysql",
+// "mariadb" or "psql"), or "" when the server is not a database MiniDock can read.
+func (i Instance) SQLClient() string {
+	switch i.TemplateID {
+	case "mariadb":
 		return "mariadb"
-	case i.TemplateID == "mysql" || strings.HasPrefix(image, "mysql"):
+	case "mysql":
 		return "mysql"
+	case "postgres":
+		return "psql"
 	}
-	return ""
+	// A custom template keeps its own id, so fall back to the image name.
+	return sqlClientForImage(i.Image)
 }
 
 // List returns the containers MiniDock created (running or not), newest first.

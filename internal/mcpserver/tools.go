@@ -35,11 +35,17 @@ func tools() []tool {
 	return []tool{
 		{
 			Name:        "list_databases",
-			Description: "List the databases on the MySQL/MariaDB server.",
+			Description: "List the databases on the server.",
 			InputSchema: objectSchema(nil, map[string]any{}),
 			Annotations: readOnly,
 			run: func(ctx context.Context, s *Server, _ json.RawMessage) (Result, error) {
-				return s.exec(ctx, "SHOW DATABASES", DefaultRowLimit)
+				return s.execDialect(ctx, func(d Dialect) (string, error) {
+					if d.Program == "psql" {
+						return `SELECT datname AS "Database" FROM pg_database ` +
+							`WHERE datallowconn ORDER BY datname`, nil
+					}
+					return "SHOW DATABASES", nil
+				}, DefaultRowLimit)
 			},
 		},
 		{
@@ -54,11 +60,14 @@ func tools() []tool {
 				if err := decodeArgs(args, &in); err != nil {
 					return Result{}, err
 				}
-				from, err := fromClause(in.Database)
-				if err != nil {
+				// Checked here, not in the dialect, so a bad name is reported even
+				// when the server turns out to be stopped or missing.
+				if err := checkIdent("database", in.Database); err != nil {
 					return Result{}, err
 				}
-				return s.exec(ctx, "SHOW FULL TABLES"+from, MaxRowLimit)
+				return s.execDialect(ctx, func(d Dialect) (string, error) {
+					return d.tablesSQL(in.Database)
+				}, MaxRowLimit)
 			},
 		},
 		{
@@ -80,19 +89,20 @@ func tools() []tool {
 				if !identRe.MatchString(in.Table) {
 					return Result{}, errors.New("table must be a plain name (letters, digits, _ $ -)")
 				}
-				from, err := fromClause(in.Database)
-				if err != nil {
+				if err := checkIdent("database", in.Database); err != nil {
 					return Result{}, err
 				}
-				return s.exec(ctx, "SHOW FULL COLUMNS FROM `"+in.Table+"`"+from, MaxRowLimit)
+				return s.execDialect(ctx, func(d Dialect) (string, error) {
+					return d.columnsSQL(in.Database, in.Table)
+				}, MaxRowLimit)
 			},
 		},
 		{
 			Name: "query",
-			Description: "Run one read-only SQL statement (SELECT, SHOW, DESCRIBE or EXPLAIN). " +
+			Description: "Run one read-only SQL statement (SELECT, SHOW, EXPLAIN and the like). " +
 				"Anything that could change data is refused. Results are limited to a number of rows and a 10 second runtime.",
 			InputSchema: objectSchema([]string{"sql"}, map[string]any{
-				"sql": strProp("A single SELECT, SHOW, DESCRIBE or EXPLAIN statement"),
+				"sql": strProp("A single read-only statement, such as SELECT, SHOW or EXPLAIN"),
 				"limit": map[string]any{
 					"type":        "integer",
 					"description": fmt.Sprintf("Maximum rows to return (default %d, max %d)", DefaultRowLimit, MaxRowLimit),
@@ -109,9 +119,6 @@ func tools() []tool {
 				if err := decodeArgs(args, &in); err != nil {
 					return Result{}, err
 				}
-				if err := CheckReadOnly(in.SQL); err != nil {
-					return Result{}, fmt.Errorf("refused: %w", err)
-				}
 				limit := in.Limit
 				if limit <= 0 {
 					limit = DefaultRowLimit
@@ -119,7 +126,18 @@ func tools() []tool {
 				if limit > MaxRowLimit {
 					limit = MaxRowLimit
 				}
-				return s.exec(ctx, strings.TrimSpace(in.SQL), limit)
+				// The shape of the statement does not depend on the database, so it
+				// is judged before discovery: a refusal reads as a refusal even when
+				// the server is stopped, and nothing reaches Docker either way.
+				if err := CheckShape(in.SQL); err != nil {
+					return Result{}, fmt.Errorf("refused: %w", err)
+				}
+				return s.execDialect(ctx, func(d Dialect) (string, error) {
+					if err := CheckReadOnly(d, in.SQL); err != nil {
+						return "", fmt.Errorf("refused: %w", err)
+					}
+					return strings.TrimSpace(in.SQL), nil
+				}, limit)
 			},
 		},
 	}
@@ -133,6 +151,15 @@ func decodeArgs(raw json.RawMessage, into any) error {
 		return fmt.Errorf("the arguments are not valid: %w", err)
 	}
 	return nil
+}
+
+// checkIdent refuses a name that is not a plain identifier. An empty name means
+// "use the default", which is always fine.
+func checkIdent(what, name string) error {
+	if name == "" || identRe.MatchString(name) {
+		return nil
+	}
+	return errors.New(what + " must be a plain name (letters, digits, _ $ -)")
 }
 
 // fromClause builds " FROM `db`" for SHOW statements, or "" for the default database.

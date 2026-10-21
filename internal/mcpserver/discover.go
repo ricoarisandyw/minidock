@@ -60,8 +60,8 @@ func Discover(ctx context.Context, be Backend, cs ConnSource, name string) (Targ
 			if i.Name != name {
 				continue
 			}
-			if i.MySQLClient() == "" {
-				return Target{}, fmt.Errorf("%q is not a MySQL or MariaDB server, and this MCP only supports those", name)
+			if i.SQLClient() == "" {
+				return Target{}, fmt.Errorf("%q is not a MySQL, MariaDB or PostgreSQL server, and this MCP only supports those", name)
 			}
 			return targetFromInstance(i)
 		}
@@ -76,7 +76,7 @@ func Discover(ctx context.Context, be Backend, cs ConnSource, name string) (Targ
 	// No name: there must be exactly one candidate, counting saved connections.
 	var running []docker.Instance
 	for _, i := range all {
-		if i.MySQLClient() != "" && i.Running() {
+		if i.SQLClient() != "" && i.Running() {
 			running = append(running, i)
 		}
 	}
@@ -91,8 +91,8 @@ func Discover(ctx context.Context, be Backend, cs ConnSource, name string) (Targ
 		c, _ := cs.Get(saved[0])
 		return targetFromConn(ctx, be, c)
 	case len(running) == 0 && len(saved) == 0:
-		return Target{}, errors.New("no running MySQL or MariaDB server found in MiniDock, and no connection saved. " +
-			"Start a server, or add a connection on the External tab, then try again")
+		return Target{}, errors.New("no running database found in MiniDock, and no connection saved. " +
+			"Start a MySQL, MariaDB or PostgreSQL server, or add a connection on the External tab, then try again")
 	}
 	names := make([]string, 0, len(running)+len(saved))
 	for _, r := range running {
@@ -108,7 +108,7 @@ func targetFromInstance(inst docker.Instance) (Target, error) {
 	if !inst.Running() {
 		return Target{}, fmt.Errorf("server %q is stopped. Start it in MiniDock (select it and press s), then try again", inst.Name)
 	}
-	t := Target{ContainerID: inst.ID, Label: inst.Name, Client: inst.MySQLClient()}
+	t := Target{ContainerID: inst.ID, Label: inst.Name, Client: inst.SQLClient()}
 	if err := t.readCredentials(inst.Connection); err != nil {
 		return Target{}, err
 	}
@@ -157,7 +157,7 @@ func (t *Target) readCredentials(connection string) error {
 func availableText(all []docker.Instance, cs ConnSource) string {
 	var names []string
 	for _, i := range all {
-		if i.MySQLClient() != "" {
+		if i.SQLClient() != "" {
 			names = append(names, i.Name)
 		}
 	}
@@ -165,7 +165,7 @@ func availableText(all []docker.Instance, cs ConnSource) string {
 		names = append(names, cs.Names()...)
 	}
 	if len(names) == 0 {
-		return "There are no MySQL or MariaDB servers yet. Create one in MiniDock, or add a connection on the External tab."
+		return "There are no databases yet. Create a MySQL, MariaDB or PostgreSQL server in MiniDock, or add a connection on the External tab."
 	}
 	sort.Strings(names)
 	return "Available: " + strings.Join(names, ", ") + "."

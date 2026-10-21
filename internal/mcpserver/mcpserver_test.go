@@ -13,6 +13,10 @@ import (
 	"minidock/internal/external"
 )
 
+// mysql and postgres are the dialects the guard tests judge against.
+var mysql, _ = DialectFor("mysql")
+var postgres, _ = DialectFor("psql")
+
 func TestCheckReadOnlyAllowsReads(t *testing.T) {
 	for _, q := range []string{
 		"SELECT 1",
@@ -27,7 +31,7 @@ func TestCheckReadOnlyAllowsReads(t *testing.T) {
 		"SELECT 'a''b'",
 		"SELECT count(*) FROM orders WHERE note = 'a -- b'",
 	} {
-		if err := CheckReadOnly(q); err != nil {
+		if err := CheckReadOnly(mysql, q); err != nil {
 			t.Errorf("%q should be allowed: %v", q, err)
 		}
 	}
@@ -72,26 +76,36 @@ func TestCheckReadOnlyRefusesRisky(t *testing.T) {
 		"SELECT 1\x00",
 		"WITH x AS (SELECT 1) SELECT * FROM x",
 	} {
-		if err := CheckReadOnly(q); err == nil {
+		if err := CheckReadOnly(mysql, q); err == nil {
 			t.Errorf("%q should be refused", q)
 		}
 	}
 }
 
-func TestMySQLClientDetection(t *testing.T) {
+func TestSQLClientDetection(t *testing.T) {
 	cases := map[string]docker.Instance{
 		"mysql":   {TemplateID: "mysql", Image: "mysql:8.4"},
 		"mariadb": {TemplateID: "mariadb", Image: "mariadb:11"},
+		"psql":    {TemplateID: "postgres", Image: "postgres:17"},
 		"":        {TemplateID: "redis", Image: "redis:7"},
 	}
 	for want, inst := range cases {
-		if got := inst.MySQLClient(); got != want {
+		if got := inst.SQLClient(); got != want {
 			t.Errorf("%+v: got %q want %q", inst, got, want)
 		}
 	}
-	// A custom template based on a MySQL image is still recognised.
-	if got := (docker.Instance{TemplateID: "my-copy", Image: "docker.io/library/mysql:9"}).MySQLClient(); got != "mysql" {
-		t.Errorf("custom template: got %q", got)
+	// A custom template based on a known image is still recognised.
+	custom := map[string]string{
+		"docker.io/library/mysql:9": "mysql",
+		"postgres:16-alpine":        "psql",
+		"pgvector/pgvector:pg17":    "psql",
+		"timescale/timescaledb:lts": "psql",
+		"nginx:latest":              "",
+	}
+	for image, want := range custom {
+		if got := (docker.Instance{TemplateID: "my-copy", Image: image}).SQLClient(); got != want {
+			t.Errorf("%s: got %q want %q", image, got, want)
+		}
 	}
 }
 

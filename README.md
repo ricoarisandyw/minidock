@@ -39,11 +39,11 @@ To manage a remote machine, set `DOCKER_HOST` (for example `ssh://user@host`) or
 | Servers | `s` | start or stop |
 | Servers | `R` | restart |
 | Servers | `c` | copy connection string |
-| Servers | `m` | copy the command that gives Claude read-only access (MySQL/MariaDB) |
+| Servers | `m` | copy the command that gives an AI tool read-only access (MySQL/MariaDB/PostgreSQL) |
 | Servers | `d` | delete (asks whether to keep the data) |
 | External | `n` / `e` | add / edit a connection to a database MiniDock did not create |
 | External | `t` | test the connection now |
-| External | `m` | copy the command that gives Claude read-only access |
+| External | `m` | copy the command that gives an AI tool read-only access |
 | External | `d` | remove the connection (the container is left alone) |
 
 ## Try each part
@@ -55,9 +55,10 @@ To manage a remote machine, set `DOCKER_HOST` (for example `ssh://user@host`) or
 5. **Your own template** – on My Templates press `n`, or press `u` on any template to start from a copy.
 6. **A database you already run** – on the External tab press `n` and pick a MySQL container from another project.
 
-## Let Claude read a MySQL server (read-only MCP)
+## Let an AI tool read a database (read-only MCP)
 
-MiniDock can give an AI tool such as Claude Code **read-only** access to a MySQL or MariaDB database.
+MiniDock can give an AI coding tool **read-only** access to a MySQL, MariaDB or PostgreSQL database.
+It writes the command for **Claude Code**, **Codex** or **Gemini CLI** — press `m` and pick one.
 It can list databases and tables, show table columns and run `SELECT` queries. It cannot change anything.
 
 This works for two kinds of database:
@@ -68,38 +69,44 @@ This works for two kinds of database:
 
 ### A server MiniDock runs
 
-1. Create a MySQL (or MariaDB) server from a template and make sure it is running.
-2. On the Servers tab select it and press `m` (also works in the details screen). MiniDock copies a command like:
+1. Create a MySQL, MariaDB or PostgreSQL server from a template and make sure it is running.
+2. On the Servers tab select it and press `m` (also works in the details screen). Pick your tool, and MiniDock
+   copies a command like:
    `claude mcp add minidock-shop-db -- /path/to/minidock mcp --server shop-db`
+   Codex and Gemini CLI get the same line with their own program name.
 3. Paste it in a terminal. In Claude Code open `/mcp` and check it says connected, then ask "list the databases".
 
 ### A database you already have
 
 1. Start the database as you normally do, for example `docker compose up -d`.
 2. Open the **External** tab and press `n`. MiniDock lists the containers it did not create; pick the one you want.
-   Images that look like MySQL or MariaDB come first, with their compose project next to the name.
+   Images that look like a database come first, with their compose project next to the name.
 3. Give the connection a name and the login to use inside it. A user that may only read is a good idea —
    MiniDock refuses writes, but a read-only user means the database refuses them too.
-4. Press `t` to try it right away. MiniDock reports how many databases that login can see, or why it could not connect.
-5. Press `m` to copy the same `claude mcp add …` command, and paste it in a terminal.
+4. Choose the client that matches the image — `psql` for PostgreSQL, `mariadb` for MariaDB.
+5. Press `t` to try it right away. MiniDock reports how many databases that login can see, or why it could not connect.
+6. Press `m`, pick your AI tool, and paste the copied command in a terminal.
 
 The container is looked up by name every time a query runs, so recreating it (`docker compose up` again) keeps working.
 Connections are saved as JSON in your config folder, in files only you can read, because they hold the password.
 Removing a connection removes only the saved login — the container and its data are untouched.
 
-Other MCP tools can use the same program: command `minidock`, arguments `mcp --server <name>`, where `<name>` is a
+Any other MCP client can use the same program: command `minidock`, arguments `mcp --server <name>`, where `<name>` is a
 MiniDock server or a saved connection. Leave out `--server` when there is only one to choose from.
 
 Tools: `list_databases`, `list_tables`, `describe_table`, `query`.
 
 How "read-only" is enforced, in two layers:
 
-* **A strict check** before anything is sent: one statement only, and it must start with `SELECT`, `SHOW`, `DESCRIBE` or `EXPLAIN`.
-  Comments, backslashes, `INTO` (files/variables), `LOAD_FILE`, `FOR UPDATE` and `EXPLAIN ANALYZE` are refused.
-* **A read-only session**: every query runs after `SET SESSION TRANSACTION READ ONLY`, so MySQL itself refuses writes.
+* **A strict check** before anything is sent: one statement only, and it must be a read for that database
+  (`SELECT`, `SHOW`, `EXPLAIN` and the like; `WITH` and `TABLE` on PostgreSQL). Comments, backslashes and more than one
+  statement are always refused, as are `INTO`, `LOAD_FILE`, `FOR UPDATE` and `EXPLAIN ANALYZE`. On PostgreSQL that also
+  covers `COPY`, dollar quoting (`$$`), the file-reading functions and anything that moves a sequence.
+* **A read-only session**: MySQL and MariaDB run after `SET SESSION TRANSACTION READ ONLY`, PostgreSQL inside
+  `BEGIN TRANSACTION READ ONLY`. The database itself refuses writes, even if the check above were bypassed.
 
 Limits: 200 rows per query by default (1000 at most), 10 seconds per query, about 4 MB of raw output.
-Queries run with `docker exec` and the `mysql` / `mariadb` program inside the container, as the user you gave it
+Queries run with `docker exec` and the `mysql`, `mariadb` or `psql` program inside the container, as the user you gave it
 (for MiniDock's own servers, the one in the connection string, usually `root`), so it also works with a remote
 `DOCKER_HOST`. The password is passed through the environment, not on the command line.
 

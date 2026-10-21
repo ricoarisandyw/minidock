@@ -24,7 +24,7 @@ var (
 		{"enter", "details"}, {"s", "start/stop"}, {"R", "restart"}, {"c", "copy"}, {"m", "mcp"}, {"d", "delete"}, {"r", "refresh"}, {"?", "help"}, {"q", "quit"},
 	}
 	hintsExternal = []hint{
-		{"n", "add"}, {"e", "edit"}, {"t", "test"}, {"m", "mcp"}, {"d", "remove"}, {"r", "refresh"}, {"?", "help"}, {"q", "quit"},
+		{"n", "add"}, {"e", "edit"}, {"s", "start/stop"}, {"t", "test"}, {"m", "mcp"}, {"d", "remove"}, {"?", "help"}, {"q", "quit"},
 	}
 	hintsFilter  = []hint{{"enter", "keep filter"}, {"esc", "clear"}}
 	hintsWizard  = []hint{{"enter/tab", "next"}, {"shift+tab", "back"}, {"esc", "cancel"}}
@@ -54,14 +54,16 @@ Templates (and My Templates)
 Servers
   enter  details & live logs                  s  start / stop
   R      restart                              c  copy connection string
-  m      copy the command that lets Claude read a MySQL/MariaDB server (read-only)
+  m      copy the command that lets an AI tool read a database (read-only).
+         Pick Claude Code, Codex or Gemini CLI when it asks.
   d      delete (asks about data)
 
 External — databases MiniDock did not create
-  Point MiniDock at a MySQL/MariaDB container you already run (docker compose, a
-  colleague's stack) so Claude can read it. Access stays read-only.
+  Point MiniDock at a MySQL, MariaDB or PostgreSQL container you already run
+  (docker compose, a colleague's stack) so your AI tool can read it. Stays read-only.
   n      add a connection                     e / enter  edit
-  t      test it now                          m          copy the command for Claude
+  s      start / stop the container           R          restart it
+  t      test it now                          m          copy the command for an AI tool
   d      remove the saved connection (the container is left alone)
 
 Press any key to close this help.`

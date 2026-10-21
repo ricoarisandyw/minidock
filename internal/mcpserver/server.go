@@ -119,8 +119,8 @@ func (s *Server) handle(ctx context.Context, line []byte) *response {
 		return ok(req.ID, map[string]any{
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "minidock-mysql-readonly", "version": s.version},
-			"instructions":    "Read-only access to a MySQL/MariaDB server, either one MiniDock runs or an existing database it was pointed at. Writes are refused.",
+			"serverInfo":      map[string]any{"name": "minidock-sql-readonly", "version": s.version},
+			"instructions":    "Read-only access to a MySQL, MariaDB or PostgreSQL database, either one MiniDock runs or an existing one it was pointed at. Writes are refused.",
 		})
 	case "ping":
 		return ok(req.ID, map[string]any{})
@@ -160,7 +160,22 @@ func (s *Server) call(ctx context.Context, req request) *response {
 
 // exec finds the target server (it may have been stopped since the last call) and runs sql.
 func (s *Server) exec(ctx context.Context, sql string, limit int) (Result, error) {
+	return s.execDialect(ctx, func(Dialect) (string, error) { return sql, nil }, limit)
+}
+
+// execDialect finds the target, then asks build for the SQL to run. The tools use
+// it because the statement they need, and whether the guard accepts it, both depend
+// on which database the target turns out to be.
+func (s *Server) execDialect(ctx context.Context, build func(Dialect) (string, error), limit int) (Result, error) {
 	t, err := Discover(ctx, s.be, s.conns, s.name)
+	if err != nil {
+		return Result{}, err
+	}
+	d, err := DialectFor(t.Client)
+	if err != nil {
+		return Result{}, err
+	}
+	sql, err := build(d)
 	if err != nil {
 		return Result{}, err
 	}

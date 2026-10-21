@@ -16,7 +16,7 @@ type Conn struct {
 	// Container is the Docker container name to exec into. It is resolved
 	// afresh on every use, so a recreated container is picked up on its own.
 	Container string `json:"container"`
-	// Client is the SQL program inside the container: "mysql" or "mariadb".
+	// Client is the SQL program inside the container: "mysql", "mariadb" or "psql".
 	Client string `json:"client"`
 	// User, Password and Database are the login used for every query.
 	User     string `json:"user"`
@@ -38,8 +38,8 @@ func Validate(c Conn) error {
 		return fmt.Errorf("name %q may only use letters, digits, dot, dash and underscore, and must start with a letter or digit", c.Name)
 	case strings.TrimSpace(c.Container) == "":
 		return fmt.Errorf("choose the Docker container to read")
-	case c.Client != "mysql" && c.Client != "mariadb":
-		return fmt.Errorf("client must be %q or %q, not %q", "mysql", "mariadb", c.Client)
+	case c.Client != "mysql" && c.Client != "mariadb" && c.Client != "psql":
+		return fmt.Errorf("client must be one of %q, %q or %q, not %q", "mysql", "mariadb", "psql", c.Client)
 	case strings.TrimSpace(c.User) == "":
 		return fmt.Errorf("the connection needs a user name")
 	case strings.HasPrefix(c.User, "-"):

@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"minidock/internal/docker"
 	"minidock/internal/external"
 )
 
@@ -13,6 +14,31 @@ import (
 type externalView struct {
 	items  []external.Conn
 	cursor int
+	// live is the container behind each connection, by connection name. A
+	// connection whose container is missing right now simply has no entry.
+	live map[string]docker.Foreign
+}
+
+// SetLive records the containers MiniDock found, so the list can show which
+// connections point at something that is actually running.
+func (v *externalView) SetLive(found []docker.Foreign) {
+	byName := make(map[string]docker.Foreign, len(found))
+	for _, f := range found {
+		byName[f.Name] = f
+	}
+	live := make(map[string]docker.Foreign, len(v.items))
+	for _, c := range v.items {
+		if f, ok := byName[c.Container]; ok {
+			live[c.Name] = f
+		}
+	}
+	v.live = live
+}
+
+// container returns the live container behind a connection, if it is there.
+func (v *externalView) container(c external.Conn) (docker.Foreign, bool) {
+	f, ok := v.live[c.Name]
+	return f, ok
 }
 
 // SetItems replaces the list, keeping the cursor on the same connection.
@@ -87,6 +113,10 @@ func (v *externalView) HandleKey(msg tea.KeyMsg) (handled bool, cmd tea.Cmd) {
 		return true, act("mcp")
 	case "t":
 		return true, act("test")
+	case "s":
+		return true, act("toggle")
+	case "R":
+		return true, act("restart")
 	default:
 		return false, nil
 	}
@@ -98,18 +128,18 @@ func (v *externalView) View(w, h int) string {
 	if len(v.items) == 0 {
 		return styleMuted.Render(lipgloss.NewStyle().Width(maxInt(10, w)).Render(
 			"No connections to existing databases yet.\n\n" +
-				"Press n to point MiniDock at a MySQL or MariaDB container it did not create —\n" +
-				"for example one from a docker-compose project — so Claude can read it.\n\n" +
+				"Press n to point MiniDock at a database container it did not create —\n" +
+				"for example one from a docker-compose project — so your AI tool can read it.\n\n" +
 				"Access stays read-only."))
 	}
 
-	const clientW = 9
-	noteW := 24
-	if w < 80 {
+	const clientW, statusW = 9, 20
+	noteW := 20
+	if w < 96 {
 		noteW = 0
 	}
-	nameW := maxInt(10, (w-2-clientW-noteW-3)/2)
-	targetW := maxInt(10, w-2-nameW-clientW-noteW-3)
+	nameW := maxInt(10, (w-2-clientW-statusW-noteW-4)/2)
+	targetW := maxInt(10, w-2-nameW-clientW-statusW-noteW-4)
 
 	h = maxInt(h-1, 1)
 	start := 0
@@ -119,13 +149,25 @@ func (v *externalView) View(w, h int) string {
 	end := minInt(len(v.items), start+h)
 
 	header := styleMuted.Render(pad("  "+pad("NAME", nameW)+" "+pad("DATABASE", targetW)+" "+
-		pad("CLIENT", clientW)+ifThen(noteW > 0, " NOTE", ""), w))
+		pad("CLIENT", clientW)+" "+pad("STATUS", statusW)+ifThen(noteW > 0, " NOTE", ""), w))
 	rows := []string{header}
 	for i := start; i < end; i++ {
 		it := v.items[i]
+		status := "not found"
+		if f, ok := v.container(it); ok {
+			status = f.StatusText
+		}
 		line := pad(it.Name, nameW) + " " + pad(it.Describe(), targetW) + " " + pad(it.Client, clientW) +
-			ifThen(noteW > 0, " "+pad(it.Note, noteW), "")
+			" " + pad(status, statusW) + ifThen(noteW > 0, " "+pad(it.Note, noteW), "")
 		dot := styleMuted.Render("○")
+		if f, ok := v.container(it); ok {
+			switch {
+			case f.Running():
+				dot = styleOK.Render("●")
+			case f.State == "paused":
+				dot = styleWarn.Render("●")
+			}
+		}
 		if i == v.cursor {
 			rows = append(rows, dot+" "+styleRowOn.Render(pad(line, w-2)))
 		} else {

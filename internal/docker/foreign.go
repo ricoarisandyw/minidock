@@ -38,6 +38,9 @@ func sqlClientForImage(image string) string {
 		return "mariadb"
 	case strings.HasPrefix(name, "mysql"), strings.HasPrefix(name, "percona"):
 		return "mysql"
+	case strings.HasPrefix(name, "postgres"), strings.HasPrefix(name, "postgis"),
+		strings.HasPrefix(name, "pgvector"), strings.HasPrefix(name, "timescale"):
+		return "psql"
 	}
 	return ""
 }

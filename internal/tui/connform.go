@@ -43,10 +43,7 @@ func newConnForm(base external.Conn, isNew bool, taken []string, candidates []do
 		db:        base.Database,
 		note:      base.Note,
 	}
-	if c.f.user == "" {
-		c.f.user = "root"
-	}
-	// A new connection starts on the first container that looks like MySQL/MariaDB.
+	// A new connection starts on the first container that looks like a database.
 	if c.f.container == "" {
 		for _, f := range candidates {
 			if f.Client != "" && f.Running() {
@@ -61,7 +58,19 @@ func newConnForm(base external.Conn, isNew bool, taken []string, candidates []do
 	if c.f.client == "" {
 		c.f.client = "mysql"
 	}
+	if c.f.user == "" {
+		c.f.user = defaultUserFor(c.f.client)
+	}
 	return c, c.buildForm()
+}
+
+// defaultUserFor is the superuser each image creates by default, which is the
+// one a person is most likely to start from.
+func defaultUserFor(client string) string {
+	if client == "psql" {
+		return "postgres"
+	}
+	return "root"
 }
 
 // containerOptions turns the scanned containers into pick-list entries.
@@ -78,7 +87,7 @@ func (c *connForm) containerOptions() []huh.Option[string] {
 		if !f.Running() {
 			label += "  — stopped"
 		} else if f.Client == "" {
-			label += "  — not a MySQL image?"
+			label += "  — not a database image?"
 		}
 		opts = append(opts, huh.NewOption(label, f.Name))
 	}
@@ -132,13 +141,17 @@ func (c *connForm) buildForm() tea.Cmd {
 	where := huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("Container").
-			Description("The MySQL or MariaDB container to read. It is looked up by name each time,\nso recreating it (docker compose up) keeps working.").
+			Description("The database container to read. It is looked up by name each time,\nso recreating it (docker compose up) keeps working.").
 			Options(opts...).
 			Value(&c.f.container),
 		huh.NewSelect[string]().
 			Title("SQL client in the container").
-			Description("The program MiniDock runs inside it. MariaDB images use mariadb.").
-			Options(huh.NewOption("mysql", "mysql"), huh.NewOption("mariadb", "mariadb")).
+			Description("The program MiniDock runs inside it: psql for PostgreSQL, mariadb for MariaDB images.").
+			Options(
+				huh.NewOption("mysql (MySQL)", "mysql"),
+				huh.NewOption("mariadb (MariaDB)", "mariadb"),
+				huh.NewOption("psql (PostgreSQL)", "psql"),
+			).
 			Value(&c.f.client),
 	).Title("1/2  Which database")
 

@@ -51,6 +51,7 @@ func TestExternalTabIsEmptyAtFirstAndExplainsItself(t *testing.T) {
 func TestExternalMCPKeyCopiesCommandForTheConnection(t *testing.T) {
 	h, copied := withExternal(t)
 	h.key("m")
+	h.key("c") // Claude Code
 	if len(*copied) != 1 {
 		t.Fatalf("expected one copy, got %v", *copied)
 	}
@@ -63,7 +64,7 @@ func TestExternalMCPKeyCopiesCommandForTheConnection(t *testing.T) {
 	if strings.Contains(cmd, "s3cret") {
 		t.Error("the command must not contain the password")
 	}
-	h.mustSee("MCP command copied")
+	h.mustSee("Claude Code command copied")
 }
 
 func TestExternalTestKeyReportsWhatItFound(t *testing.T) {
@@ -167,4 +168,90 @@ func TestHelpMentionsTheExternalTab(t *testing.T) {
 	h := newHarness(t)
 	h.key("?")
 	h.mustSee("databases MiniDock did not create", "read-only")
+}
+
+// ---------------------------------------------------------------- live state
+
+// The dot and the status column must follow the real container, not a fixed value.
+// connRow is the line of the list that shows the connection, so a test can look
+// at its dot without catching the one in the Docker status bar.
+func connRow(t *testing.T, h *harness, name string) string {
+	t.Helper()
+	for _, line := range strings.Split(h.view(), "\n") {
+		if strings.Contains(line, name+" ") && strings.Contains(line, "@") {
+			return line
+		}
+	}
+	t.Fatalf("no row for %q:\n%s", name, h.view())
+	return ""
+}
+
+func TestExternalTabShowsWhetherTheContainerRuns(t *testing.T) {
+	h, _ := withExternal(t)
+	h.mustSee("Up 5 minutes")
+	if !strings.Contains(connRow(t, h, "shop"), "●") {
+		t.Errorf("a running container should get a filled dot: %q", connRow(t, h, "shop"))
+	}
+
+	// Stop it: the row must change.
+	h.be.foreign = []docker.Foreign{{
+		ID: "ctr-shop", Name: "shop-db-1", Image: "mysql:8.4", State: "exited",
+		StatusText: "Exited (0) 1 minute ago", Client: "mysql",
+	}}
+	h.send(foreignMsg{list: h.be.foreign})
+	h.mustSee("Exited (0)") // the column is narrow, so only the start is on screen
+	if strings.Contains(connRow(t, h, "shop"), "●") {
+		t.Errorf("a stopped container should not get a filled dot: %q", connRow(t, h, "shop"))
+	}
+}
+
+func TestExternalTabSaysWhenTheContainerIsGone(t *testing.T) {
+	h, _ := withExternal(t)
+	h.be.foreign = nil
+	h.send(foreignMsg{list: nil})
+	h.mustSee("not found")
+}
+
+func TestExternalStartStopControlsTheContainer(t *testing.T) {
+	h, _ := withExternal(t)
+
+	// It is running, so s stops it.
+	h.key("s")
+	if !h.be.called("stop ctr-shop") {
+		t.Errorf("s should stop the running container, calls = %v", h.be.calls)
+	}
+
+	// Now report it stopped; s should start it again.
+	h.be.foreign = []docker.Foreign{{
+		ID: "ctr-shop", Name: "shop-db-1", Image: "mysql:8.4", State: "exited",
+		StatusText: "Exited (0) 1 minute ago", Client: "mysql",
+	}}
+	h.send(foreignMsg{list: h.be.foreign})
+	h.key("s")
+	if !h.be.called("start ctr-shop") {
+		t.Errorf("s should start the stopped container, calls = %v", h.be.calls)
+	}
+
+	h.key("R")
+	if !h.be.called("restart ctr-shop") {
+		t.Errorf("R should restart it, calls = %v", h.be.calls)
+	}
+}
+
+// Starting something MiniDock cannot find must explain, not fail silently.
+func TestExternalStartSaysSoWhenThereIsNoContainer(t *testing.T) {
+	h, _ := withExternal(t)
+	h.be.foreign = nil
+	h.send(foreignMsg{list: nil})
+	h.key("s")
+	h.mustSee("No container named shop-db-1")
+	if h.be.called("start ctr-shop") || h.be.called("stop ctr-shop") {
+		t.Error("nothing should have been started or stopped")
+	}
+}
+
+func TestHelpMentionsExternalStartStop(t *testing.T) {
+	h := newHarness(t)
+	h.key("?")
+	h.mustSee("start / stop the container")
 }

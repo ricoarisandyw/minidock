@@ -79,6 +79,8 @@ type App struct {
 	pendingInst docker.Instance
 	pendingTpl  template.Template
 	pendingConn external.Conn
+	// pendingMCPName is the server or connection the tool dialog is about.
+	pendingMCPName string
 }
 
 // New builds the app around a Docker backend, a template store and a store of
@@ -105,6 +107,7 @@ func (a *App) reloadConns() {
 	items, problems := a.conns.List()
 	a.extProblems = problems
 	a.ext.SetItems(items)
+	a.ext.SetLive(a.foreign)
 }
 
 func (a *App) reloadTemplates() {
@@ -214,6 +217,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case foreignMsg:
 		if m.err == nil {
 			a.foreign = m.list
+			a.ext.SetLive(m.list)
 		}
 		return a, nil
 
@@ -557,6 +561,8 @@ func (a *App) onConfirm(m confirmChoiceMsg) tea.Cmd {
 		return nil
 	}
 	switch m.id {
+	case "mcp-tool":
+		return a.copyMCPCommand(m.value)
 	case "delete-template":
 		if err := a.store.Delete(a.pendingTpl.ID); err != nil {
 			return a.setToast(err.Error(), true)
@@ -600,14 +606,10 @@ func (a *App) onServerAction(m serverActionMsg) tea.Cmd {
 		}
 		return a.setToast("Connection string copied", false)
 	case "mcp":
-		if inst.MySQLClient() == "" {
-			return a.setToast("MCP is only available for MySQL and MariaDB servers.", true)
+		if inst.SQLClient() == "" {
+			return a.setToast("MCP is only available for MySQL, MariaDB and PostgreSQL servers.", true)
 		}
-		cmd := mcpCommand(inst)
-		if err := copyToClipboard(cmd); err != nil {
-			return a.setToast("Could not copy ("+err.Error()+"). Run: "+cmd, true)
-		}
-		return a.setToast("MCP command copied. Paste it in your terminal to let Claude read "+inst.Name+" (read-only).", false)
+		return a.askWhichAITool(inst.Name)
 	case "delete":
 		a.pendingInst = inst
 		body := "The container will be removed."
@@ -656,13 +658,11 @@ func (a *App) onExternalAction(m externalActionMsg) tea.Cmd {
 		a.pendingConn = m.conn
 		return a.openConnForm(m.conn, false)
 	case "mcp":
-		cmd := mcpCommandFor(m.conn.Name)
-		if err := copyToClipboard(cmd); err != nil {
-			return a.setToast("Could not copy ("+err.Error()+"). Run: "+cmd, true)
-		}
-		return a.setToast("MCP command copied. Paste it in your terminal to let Claude read "+m.conn.Name+" (read-only).", false)
+		return a.askWhichAITool(m.conn.Name)
 	case "test":
 		return a.testConn(m.conn)
+	case "toggle", "restart":
+		return a.controlConnContainer(m.kind, m.conn)
 	case "delete":
 		a.pendingConn = m.conn
 		a.conf = &confirm{
@@ -675,6 +675,24 @@ func (a *App) onExternalAction(m externalActionMsg) tea.Cmd {
 		a.mode = modeConfirm
 	}
 	return nil
+}
+
+// controlConnContainer starts, stops or restarts the container behind a saved
+// connection. MiniDock does not own that container, so it says whose it is in the
+// message, and refuses when it cannot find it rather than guessing.
+func (a *App) controlConnContainer(kind string, c external.Conn) tea.Cmd {
+	f, ok := a.ext.container(c)
+	if !ok {
+		return a.setToast("No container named "+c.Container+" right now. Start it yourself, or edit the connection.", true)
+	}
+	switch {
+	case kind == "restart":
+		return a.act("Restarted "+f.Name, func(ctx context.Context, be Backend) error { return be.Restart(ctx, f.ID) })
+	case f.Running():
+		return a.act("Stopped "+f.Name, func(ctx context.Context, be Backend) error { return be.Stop(ctx, f.ID) })
+	default:
+		return a.act("Started "+f.Name, func(ctx context.Context, be Backend) error { return be.Start(ctx, f.ID) })
+	}
 }
 
 // testConn tries the connection the way the MCP server would, and reports what it found.
@@ -708,6 +726,41 @@ func (a *App) onConnFormDone(m connFormDoneMsg) tea.Cmd {
 	a.ext.selectName(m.conn.Name)
 	a.tab = tabExternal
 	return a.setToast("Saved “"+m.conn.Name+"”. Press m to copy the command that lets Claude read it.", false)
+}
+
+// ---------------------------------------------------------------- mcp command
+
+// askWhichAITool opens the small dialog that picks the AI tool to write the
+// command for. The name is remembered until the dialog is answered.
+func (a *App) askWhichAITool(name string) tea.Cmd {
+	a.pendingMCPName = name
+	opts := make([]confirmOpt, 0, len(aiTools))
+	for _, t := range aiTools {
+		opts = append(opts, confirmOpt{key: t.key, label: t.name, value: t.key})
+	}
+	a.conf = &confirm{
+		id:    "mcp-tool",
+		title: "Copy the command for which tool?",
+		body: "MiniDock copies one line you paste in a terminal. It gives that tool " +
+			"read-only access to " + name + ".",
+		opts: opts,
+	}
+	a.mode = modeConfirm
+	return nil
+}
+
+// copyMCPCommand writes the command for the chosen tool to the clipboard.
+func (a *App) copyMCPCommand(key string) tea.Cmd {
+	t, ok := aiToolByKey(key)
+	if !ok {
+		return nil
+	}
+	name := a.pendingMCPName
+	cmd := mcpCommandForTool(t, name)
+	if err := copyToClipboard(cmd); err != nil {
+		return a.setToast("Could not copy ("+err.Error()+"). Run: "+cmd, true)
+	}
+	return a.setToast(t.name+" command copied. Paste it in your terminal to let it read "+name+" (read-only).", false)
 }
 
 // ---------------------------------------------------------------- view
