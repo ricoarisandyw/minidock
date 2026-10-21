@@ -1,0 +1,20 @@
+{
+  "id": "mysql",
+  "name": "MySQL",
+  "icon": "🐬",
+  "description": "The classic open-source relational database, widely used in web apps.",
+  "image": "mysql",
+  "versions": ["8.4", "8.0", "9"],
+  "containerPort": 3306,
+  "defaultHostPort": 3306,
+  "dataPath": "/var/lib/mysql",
+  "fields": [
+    { "key": "password", "label": "Root password", "type": "password", "default": "mysql", "required": true, "minLength": 4 },
+    { "key": "database", "label": "Database name", "type": "text", "default": "app", "required": true }
+  ],
+  "env": {
+    "MYSQL_ROOT_PASSWORD": "{{password}}",
+    "MYSQL_DATABASE": "{{database}}"
+  },
+  "connectionString": "mysql://root:{{password}}@{{host}}:{{port}}/{{database}}"
+}

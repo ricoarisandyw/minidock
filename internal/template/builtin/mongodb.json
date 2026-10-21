@@ -1,0 +1,20 @@
+{
+  "id": "mongodb",
+  "name": "MongoDB",
+  "icon": "🍃",
+  "description": "Document database that stores flexible JSON-like data.",
+  "image": "mongo",
+  "versions": ["8", "7", "6"],
+  "containerPort": 27017,
+  "defaultHostPort": 27017,
+  "dataPath": "/data/db",
+  "fields": [
+    { "key": "user", "label": "Root username", "type": "text", "default": "admin", "required": true },
+    { "key": "password", "label": "Root password", "type": "password", "default": "mongo", "required": true, "minLength": 4 }
+  ],
+  "env": {
+    "MONGO_INITDB_ROOT_USERNAME": "{{user}}",
+    "MONGO_INITDB_ROOT_PASSWORD": "{{password}}"
+  },
+  "connectionString": "mongodb://{{user}}:{{password}}@{{host}}:{{port}}/?authSource=admin"
+}

@@ -1,0 +1,22 @@
+{
+  "id": "postgres",
+  "name": "PostgreSQL",
+  "icon": "🐘",
+  "description": "Relational database that is powerful, reliable and loved by backend developers.",
+  "image": "postgres",
+  "versions": ["17", "16", "15", "14"],
+  "containerPort": 5432,
+  "defaultHostPort": 5432,
+  "dataPath": "/var/lib/postgresql/data",
+  "fields": [
+    { "key": "user", "label": "Username", "type": "text", "default": "postgres", "required": true },
+    { "key": "password", "label": "Password", "type": "password", "default": "postgres", "required": true, "minLength": 4 },
+    { "key": "database", "label": "Database name", "type": "text", "default": "app", "required": true }
+  ],
+  "env": {
+    "POSTGRES_USER": "{{user}}",
+    "POSTGRES_PASSWORD": "{{password}}",
+    "POSTGRES_DB": "{{database}}"
+  },
+  "connectionString": "postgresql://{{user}}:{{password}}@{{host}}:{{port}}/{{database}}"
+}

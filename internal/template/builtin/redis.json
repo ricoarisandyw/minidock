@@ -1,0 +1,16 @@
+{
+  "id": "redis",
+  "name": "Redis",
+  "icon": "🟥",
+  "description": "Fast in-memory key-value store, great for cache, queues and sessions.",
+  "image": "redis",
+  "versions": ["7", "8", "6"],
+  "containerPort": 6379,
+  "defaultHostPort": 6379,
+  "dataPath": "/data",
+  "fields": [
+    { "key": "password", "label": "Password", "type": "password", "default": "redis", "required": true, "minLength": 4 }
+  ],
+  "command": ["redis-server", "--requirepass", "{{password}}", "--appendonly", "yes"],
+  "connectionString": "redis://:{{password}}@{{host}}:{{port}}"
+}

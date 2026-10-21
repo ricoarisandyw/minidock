@@ -1,0 +1,20 @@
+{
+  "id": "rabbitmq",
+  "name": "RabbitMQ",
+  "icon": "🐇",
+  "description": "Message broker for queues and background jobs.",
+  "image": "rabbitmq",
+  "versions": ["4", "3"],
+  "containerPort": 5672,
+  "defaultHostPort": 5672,
+  "dataPath": "/var/lib/rabbitmq",
+  "fields": [
+    { "key": "user", "label": "Username", "type": "text", "default": "guest", "required": true },
+    { "key": "password", "label": "Password", "type": "password", "default": "guest", "required": true, "minLength": 4 }
+  ],
+  "env": {
+    "RABBITMQ_DEFAULT_USER": "{{user}}",
+    "RABBITMQ_DEFAULT_PASS": "{{password}}"
+  },
+  "connectionString": "amqp://{{user}}:{{password}}@{{host}}:{{port}}"
+}

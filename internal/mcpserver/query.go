@@ -1,0 +1,175 @@
+package mcpserver
+
+import (
+	"bytes"
+	"context"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"minidock/internal/docker"
+)
+
+// Limits that keep one query from hurting the database or flooding the AI.
+const (
+	DefaultRowLimit = 200
+	MaxRowLimit     = 1000
+	queryTimeout    = 10 * time.Second
+	maxOutputBytes  = 4 << 20 // 4 MiB of raw client output
+)
+
+// Runner runs a command inside a container. *docker.Client implements it.
+type Runner interface {
+	Exec(ctx context.Context, id string, cmd, env []string, maxOutput int) (docker.ExecResult, error)
+}
+
+// Result is a table of text values; a nil value is SQL NULL.
+type Result struct {
+	Columns   []string    `json:"columns"`
+	Rows      [][]*string `json:"rows"`
+	RowCount  int         `json:"rowCount"`
+	Truncated bool        `json:"truncated"`
+	Note      string      `json:"note,omitempty"`
+}
+
+// readOnlyPrefix makes the session read-only and limits how long a statement may run.
+// Any write then fails with MySQL error 1792, whatever the SQL text looks like.
+func readOnlyPrefix(client string) string {
+	if client == "mariadb" {
+		return "SET SESSION TRANSACTION READ ONLY; SET SESSION max_statement_time=10; "
+	}
+	return "SET SESSION TRANSACTION READ ONLY; SET SESSION MAX_EXECUTION_TIME=10000; "
+}
+
+// runSQL runs one statement in a read-only session and returns up to limit rows.
+// The caller is responsible for checking user-written SQL with CheckReadOnly first.
+func runSQL(ctx context.Context, r Runner, t Target, sql string, limit int) (Result, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout+5*time.Second)
+	defer cancel()
+
+	cmd := []string{
+		t.Client, "--xml", "--connect-timeout=5", "--default-character-set=utf8mb4",
+		"--user=" + t.User,
+	}
+	if t.Database != "" {
+		cmd = append(cmd, "--database="+t.Database)
+	}
+	cmd = append(cmd, "-e", readOnlyPrefix(t.Client)+sql)
+	// The password goes in the environment, so it is not visible in the process list.
+	env := []string{"MYSQL_PWD=" + t.Password}
+
+	res, err := r.Exec(ctx, t.ContainerID, cmd, env, maxOutputBytes)
+	switch {
+	case errors.Is(err, docker.ErrOutputTooLarge):
+		return Result{}, errors.New("the result is too large. Add a LIMIT or select fewer columns")
+	case errors.Is(err, context.DeadlineExceeded):
+		return Result{}, errors.New("the query took too long and was stopped")
+	case err != nil:
+		return Result{}, fmt.Errorf("cannot run the query: %s", docker.Explain(err))
+	}
+	if res.ExitCode != 0 {
+		return Result{}, errors.New(clientError(res.Stderr, t.Client))
+	}
+	return parseXML(res.Stdout, limit)
+}
+
+// clientError turns the SQL client's stderr into one short message.
+func clientError(stderr []byte, client string) string {
+	var keep []string
+	for _, line := range strings.Split(string(stderr), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, client+": [Warning]") {
+			continue
+		}
+		keep = append(keep, line)
+	}
+	if len(keep) == 0 {
+		return "the SQL client failed without a message"
+	}
+	msg := strings.Join(keep, " ")
+	if strings.Contains(msg, "1792") {
+		msg += " (this server is read-only)"
+	}
+	if strings.Contains(msg, "executable file not found") {
+		msg += " (the container has no " + client + " program)"
+	}
+	return msg
+}
+
+// parseXML reads the output of `mysql --xml`. It keeps the first limit rows.
+func parseXML(data []byte, limit int) (Result, error) {
+	res := Result{Columns: []string{}, Rows: [][]*string{}}
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	dec.Strict = false
+
+	var row []*string
+	var fieldName string
+	var text strings.Builder
+	var isNull, inRow, inField bool
+	haveColumns := false
+
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return Result{}, fmt.Errorf("cannot read the SQL client output: %w", err)
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "row":
+				inRow, row = true, nil
+			case "field":
+				inField, isNull = true, false
+				fieldName = ""
+				text.Reset()
+				for _, a := range t.Attr {
+					switch a.Name.Local {
+					case "name":
+						fieldName = a.Value
+					case "nil":
+						isNull = a.Value == "true"
+					}
+				}
+				if inRow && !haveColumns {
+					res.Columns = append(res.Columns, fieldName)
+				}
+			}
+		case xml.CharData:
+			if inField {
+				text.Write(t)
+			}
+		case xml.EndElement:
+			switch t.Name.Local {
+			case "field":
+				if inRow {
+					if isNull {
+						row = append(row, nil)
+					} else {
+						v := text.String()
+						row = append(row, &v)
+					}
+				}
+				inField = false
+			case "row":
+				haveColumns = true
+				res.RowCount++
+				if len(res.Rows) < limit {
+					res.Rows = append(res.Rows, row)
+				} else {
+					res.Truncated = true
+				}
+				inRow = false
+			}
+		}
+	}
+	if res.Truncated {
+		res.Note = fmt.Sprintf("Showing the first %d rows of %d. Add a WHERE or LIMIT to narrow it down.", len(res.Rows), res.RowCount)
+	}
+	return res, nil
+}
